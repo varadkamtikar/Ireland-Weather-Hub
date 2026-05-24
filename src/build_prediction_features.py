@@ -6,12 +6,24 @@ from sqlalchemy.engine import URL
 
 load_dotenv()
 
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME")
-DB_SSLMODE = os.getenv("DB_SSLMODE", "require")
+def get_config(key, default=None):
+    value = os.getenv(key)
+    if value:
+        return value
+
+    try:
+        import streamlit as st
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
+DB_USER = get_config("DB_USER")
+DB_PASSWORD = get_config("DB_PASSWORD")
+DB_HOST = get_config("DB_HOST")
+DB_PORT = get_config("DB_PORT", "5432")
+DB_NAME = get_config("DB_NAME")
+DB_SSLMODE = get_config("DB_SSLMODE", "require")
 
 DATABASE_URL = URL.create(
     drivername="postgresql+psycopg2",
