@@ -2,7 +2,7 @@ import os
 import math
 import subprocess
 from datetime import datetime
-from src.predict import predict_rain_next_hour
+from src.predict import predict_city_rain
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -18,6 +18,26 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Load prediction history from DB for sidebar display
+# ──────────────────────────────────────────────────────────────────────────────
+def load_prediction_history():
+    query = """
+        SELECT
+            city,
+            rain_probability,
+            risk_level,
+            prediction_time
+        FROM rain_predictions
+        ORDER BY prediction_time DESC
+        LIMIT 100
+    """
+
+    return pd.read_sql(query, engine)
+
+
+prediction_df = load_prediction_history()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Custom CSS
@@ -459,6 +479,17 @@ def load_csv():
     except Exception:
         return None, None
 
+# ──────────────────────────────────────────────────────────────────────────────
+# New Dashbord section: Recent AI Predictions
+# ──────────────────────────────────────────────────────────────────────────────
+
+st.subheader("Recent AI Rain Predictions")
+
+st.dataframe(
+    prediction_df,
+    use_container_width=True
+)   
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Process any pending map-click zoom from last render (before sidebar renders)
@@ -682,6 +713,12 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+avg_prob = prediction_df["rain_probability"].mean()
+
+high_risk_count = (
+    prediction_df["risk_level"] == "High"
+).sum()
+
 # ──────────────────────────────────────────────────────────────────────────────
 # ML Rainfall Prediction
 # ──────────────────────────────────────────────────────────────────────────────
@@ -737,7 +774,7 @@ if len(ml_df) >= 3:
         "humidity_rolling_3": humidity_rolling_3,
     }
 
-    prediction_result = predict_rain_next_hour(input_data)
+    prediction_result = predict_city_rain(ml_city)
 
     pred_col1, pred_col2, pred_col3 = st.columns(3)
 

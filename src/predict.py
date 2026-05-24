@@ -1,6 +1,11 @@
 import os
+from datetime import datetime
+
 import joblib
 import pandas as pd
+from sqlalchemy import text
+
+from src.build_prediction_features import build_prediction_features, engine
 
 
 # ---------------------------------------------------
@@ -22,17 +27,10 @@ city_encoder = joblib.load(ENCODER_PATH)
 
 
 # ---------------------------------------------------
-# PREDICTION FUNCTION
+# LOW-LEVEL PREDICTION FUNCTION
 # ---------------------------------------------------
 
 def predict_rain_next_hour(input_data):
-    """
-    Predict whether it will rain in the next hour.
-
-    input_data must be a dictionary with the same feature names
-    used during model training.
-    """
-
     df = pd.DataFrame([input_data])
 
     df["city"] = city_encoder.transform(df["city"])
@@ -55,33 +53,75 @@ def predict_rain_next_hour(input_data):
 
 
 # ---------------------------------------------------
+# SAVE PREDICTION TO DATABASE
+# ---------------------------------------------------
+
+def save_prediction_to_db(result):
+    now = datetime.now()
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO rain_predictions (
+                    city,
+                    prediction_time,
+                    rain_prediction,
+                    rain_probability,
+                    risk_level,
+                    model_version,
+                    created_at
+                )
+                VALUES (
+                    :city,
+                    :prediction_time,
+                    :rain_prediction,
+                    :rain_probability,
+                    :risk_level,
+                    :model_version,
+                    :created_at
+                )
+            """),
+            {
+                "city": result["city"],
+                "prediction_time": now,
+                "rain_prediction": result["rain_prediction"],
+                "rain_probability": result["rain_probability"],
+                "risk_level": result["risk_level"],
+                "model_version": "xgboost_v1",
+                "created_at": now,
+            }
+        )
+
+
+# ---------------------------------------------------
+# HIGH-LEVEL CITY PREDICTION FUNCTION
+# ---------------------------------------------------
+
+def predict_city_rain(city, save_to_db=True):
+    input_data = build_prediction_features(city)
+    result = predict_rain_next_hour(input_data)
+
+    final_result = {
+        "city": city,
+        **result
+    }
+
+    if save_to_db:
+        save_prediction_to_db(final_result)
+
+    return final_result
+
+
+# ---------------------------------------------------
 # TEST RUN
 # ---------------------------------------------------
 
 if __name__ == "__main__":
+    cities = [
+        "Dublin", "Cork", "Galway", "Limerick", "Waterford",
+        "Kilkenny", "Sligo", "Athlone", "Killarney", "Derry"
+    ]
 
-    sample_input = {
-        "city": "Dublin",
-        "latitude": 53.3498,
-        "longitude": -6.2603,
-        "temperature": 12.5,
-        "humidity": 85,
-        "precipitation": 0.2,
-        "rain": 0.2,
-        "pressure": 1012,
-        "cloud_cover": 90,
-        "wind_speed": 18,
-        "hour": 14,
-        "day": 21,
-        "month": 5,
-        "day_of_week": 3,
-        "precipitation_lag_1": 0.0,
-        "humidity_lag_1": 82,
-        "cloud_cover_lag_1": 88,
-        "temp_rolling_3": 12.1,
-        "humidity_rolling_3": 83.5,
-    }
-
-    result = predict_rain_next_hour(sample_input)
-
-    print(result)
+    for city in cities:
+        result = predict_city_rain(city)
+        print(result)

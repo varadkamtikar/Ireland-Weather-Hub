@@ -4,7 +4,7 @@ from datetime import datetime
 import pandas as pd
 import requests
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 
 load_dotenv()
@@ -12,9 +12,8 @@ load_dotenv()
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT", "5432")
+DB_PORT = os.getenv("DB_PORT")
 DB_NAME = os.getenv("DB_NAME")
-DB_SSLMODE = os.getenv("DB_SSLMODE", "require")
 
 DATABASE_URL = URL.create(
     drivername="postgresql+psycopg2",
@@ -25,7 +24,10 @@ DATABASE_URL = URL.create(
     database=DB_NAME,
 )
 
-engine = create_engine(DATABASE_URL, connect_args={"sslmode": DB_SSLMODE})
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"sslmode": os.getenv("DB_SSLMODE", "require")}
+)
 
 LOCATIONS = [
     {"city": "Dublin", "lat": 53.3498, "lon": -6.2603},
@@ -92,8 +94,3 @@ df.to_sql(
 )
 
 print(f"Inserted {len(df)} rows into PostgreSQL.")
-
-with engine.begin() as conn:
-    conn.execute(text("DELETE FROM live_weather WHERE loaded_at < NOW() - INTERVAL '2 days'"))
-
-print("Pruned live_weather rows older than 2 days.")
