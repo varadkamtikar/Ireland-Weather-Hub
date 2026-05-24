@@ -7,6 +7,7 @@ A real-time weather monitoring and analytics dashboard for 10 Irish cities, buil
 ## Live Demo
 
 > Run locally — see [Quick Start](#quick-start) below.
+> Run Deployed Application - https://ireland-weather.streamlit.app
 
 ---
 
