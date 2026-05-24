@@ -745,7 +745,14 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-avg_prob = prediction_df["rain_probability"].mean()
+prediction_df = load_prediction_history()
+
+if not prediction_df.empty:
+    avg_prob = prediction_df["rain_probability"].mean()
+    high_risk_count = (prediction_df["risk_level"] == "High").sum()
+else:
+    avg_prob = 0
+    high_risk_count = 0
 
 high_risk_count = (
     prediction_df["risk_level"] == "High"
