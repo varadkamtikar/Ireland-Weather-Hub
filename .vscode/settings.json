@@ -1,0 +1,15 @@
+{
+    "sqltools.connections": [
+        {
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "127.0.0.1",
+            "port": 5432,
+            "driver": "PostgreSQL",
+            "name": "Local PostgreSQL",
+            "database": "ireland_weather",
+            "username": "varadk_99",
+            "password": "postgres123"
+        }
+    ]
+}

@@ -2,7 +2,7 @@ import os
 import math
 import subprocess
 from datetime import datetime
-
+from src.predict import predict_rain_next_hour
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -34,40 +34,44 @@ st.markdown("""
     min-height: 100vh;
 }
 
-/* ── Header: transparent but NOT hidden — sidebar toggle lives here ── */
-[data-testid="stHeader"] {
-    background: transparent !important;
-    backdrop-filter: none !important;
-}
-/* Hide only the deploy/hamburger toolbar, not the whole header */
-[data-testid="stToolbar"] { visibility: hidden !important; height: 0 !important; }
-#MainMenu { visibility: hidden !important; }
-footer    { visibility: hidden !important; }
+/* ── Header: transparent, but keep it in the DOM ── */
+[data-testid="stHeader"] { background: transparent !important; }
 
-/* ── Sidebar collapse/expand toggle — always on top and visible ── */
-[data-testid="collapsedControl"] {
+/* ── Hide clutter — but NOT the toolbar itself (sidebar expand lives there) ── */
+[data-testid="stMainMenu"]        { visibility: hidden !important; }
+[data-testid="stAppDeployButton"] { display: none !important; }
+footer { visibility: hidden !important; }
+
+/* ── Sidebar EXPAND button (appears in toolbar when sidebar is collapsed) ──
+   data-testid="stExpandSidebarButton" confirmed from Streamlit 1.57 bundle  */
+[data-testid="stExpandSidebarButton"] {
     visibility: visible !important;
-    display: flex !important;
-    z-index: 9999 !important;
-    background: rgba(5,12,26,0.95) !important;
-    border-right: 1px solid rgba(255,255,255,0.08) !important;
-    border-bottom: 1px solid rgba(255,255,255,0.06) !important;
-    border-radius: 0 0 10px 0 !important;
+    background: rgba(5,12,26,0.92) !important;
+    border: 1px solid rgba(0,255,136,0.28) !important;
+    border-left: none !important;
+    border-radius: 0 8px 8px 0 !important;
+    padding: 4px 6px !important;
 }
-[data-testid="collapsedControl"] button {
-    color: rgba(255,255,255,0.6) !important;
+[data-testid="stExpandSidebarButton"] svg {
+    fill: rgba(255,255,255,0.75) !important;
+    color: rgba(255,255,255,0.75) !important;
 }
-[data-testid="collapsedControl"] button:hover {
+[data-testid="stExpandSidebarButton"]:hover {
+    background: rgba(0,255,136,0.12) !important;
+    border-color: rgba(0,255,136,0.55) !important;
+}
+[data-testid="stExpandSidebarButton"]:hover svg {
+    fill: #00ff88 !important;
     color: #00ff88 !important;
-    background: rgba(0,255,136,0.08) !important;
 }
-/* The "X" button inside the sidebar to collapse it */
-button[data-testid="baseButton-headerNoPadding"] {
-    visibility: visible !important;
+
+/* ── Sidebar COLLAPSE button (inside the sidebar to close it) ── */
+[data-testid="stSidebarCollapseButton"] button {
     color: rgba(255,255,255,0.5) !important;
 }
-button[data-testid="baseButton-headerNoPadding"]:hover {
+[data-testid="stSidebarCollapseButton"] button:hover {
     color: #00ff88 !important;
+    background: rgba(0,255,136,0.08) !important;
 }
 
 /* ── Sidebar ── */
@@ -678,6 +682,129 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# ──────────────────────────────────────────────────────────────────────────────
+# ML Rainfall Prediction
+# ──────────────────────────────────────────────────────────────────────────────
+st.markdown("""
+<div class="section-hdr">
+    <span class="section-hdr-title">🤖 AI Rainfall Prediction</span>
+    <div class="section-hdr-line"></div>
+    <span style="color:rgba(255,255,255,0.25);font-size:0.72rem;white-space:nowrap;">
+        XGBoost Forecasting Engine
+    </span>
+</div>
+""", unsafe_allow_html=True)
+
+ml_city = st.selectbox(
+    "Select city for AI prediction",
+    sorted(city_df["city"].unique()),
+    key="ml_city_select"
+)
+
+ml_df = (
+    city_df[city_df["city"] == ml_city]
+    .sort_values("forecast_time")
+    .copy()
+)
+
+if len(ml_df) >= 3:
+
+    latest_row = ml_df.iloc[-1]
+    prev_row   = ml_df.iloc[-2]
+
+    temp_rolling_3 = ml_df["temperature"].tail(3).mean()
+    humidity_rolling_3 = ml_df["humidity"].tail(3).mean()
+
+    input_data = {
+        "city": latest_row["city"],
+        "latitude": latest_row["latitude"],
+        "longitude": latest_row["longitude"],
+        "temperature": latest_row["temperature"],
+        "humidity": latest_row["humidity"],
+        "precipitation": latest_row["precipitation"],
+        "rain": latest_row["precipitation"],
+        "pressure": latest_row["pressure"],
+        "cloud_cover": latest_row["cloud_cover"],
+        "wind_speed": latest_row["wind_speed"],
+        "hour": latest_row["forecast_time"].hour,
+        "day": latest_row["forecast_time"].day,
+        "month": latest_row["forecast_time"].month,
+        "day_of_week": latest_row["forecast_time"].dayofweek,
+        "precipitation_lag_1": prev_row["precipitation"],
+        "humidity_lag_1": prev_row["humidity"],
+        "cloud_cover_lag_1": prev_row["cloud_cover"],
+        "temp_rolling_3": temp_rolling_3,
+        "humidity_rolling_3": humidity_rolling_3,
+    }
+
+    prediction_result = predict_rain_next_hour(input_data)
+
+    pred_col1, pred_col2, pred_col3 = st.columns(3)
+
+    with pred_col1:
+        st.markdown(f"""
+        <div class="kpi-card blue">
+            <div class="kpi-top-bar"></div>
+            <div class="kpi-icon">🌧️</div>
+            <div class="kpi-label">Rain Probability</div>
+            <div class="kpi-value">
+                {prediction_result['rain_probability']:.1f}
+                <span style="font-size:1rem;font-weight:500">%</span>
+            </div>
+            <div class="kpi-sub">Predicted for next hour</div>
+            <div class="kpi-glow"></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with pred_col2:
+        risk_color = {
+            "Low": "#00ff88",
+            "Medium": "#ffcc00",
+            "High": "#ff4d4d"
+        }.get(prediction_result["risk_level"], "#00d4ff")
+
+        st.markdown(f"""
+        <div class="kpi-card teal">
+            <div class="kpi-top-bar"></div>
+            <div class="kpi-icon">⚠️</div>
+            <div class="kpi-label">Risk Level</div>
+            <div class="kpi-value" style="color:{risk_color};">
+                {prediction_result['risk_level']}
+            </div>
+            <div class="kpi-sub">AI weather risk assessment</div>
+            <div class="kpi-glow"></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with pred_col3:
+
+        pred_text = (
+            "Rain Likely"
+            if prediction_result["rain_prediction"] == 1
+            else "No Rain Likely"
+        )
+
+        pred_icon = (
+            "🌧️"
+            if prediction_result["rain_prediction"] == 1
+            else "☀️"
+        )
+
+        st.markdown(f"""
+        <div class="kpi-card purple">
+            <div class="kpi-top-bar"></div>
+            <div class="kpi-icon">{pred_icon}</div>
+            <div class="kpi-label">Prediction</div>
+            <div class="kpi-value" style="font-size:1.3rem;padding-top:0.2rem;">
+                {pred_text}
+            </div>
+            <div class="kpi-sub">Next hour forecast</div>
+            <div class="kpi-glow"></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+else:
+    st.warning("Not enough historical rows available for ML prediction.")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # City Snapshot Grid
@@ -758,76 +885,101 @@ else:
         )
 
     # ── Build map ──────────────────────────────────────────────────────────
-    fig_map = px.scatter_mapbox(
-        map_df,
-        lat="latitude",
-        lon="longitude",
-        size="precipitation_probability",
-        color="precipitation_probability",
-        hover_name="city",
-        custom_data=["city"],
-        hover_data={
-            "temperature":               ":.1f",
-            "humidity":                  ":.0f",
-            "precipitation":             ":.2f",
-            "precipitation_probability": ":.0f",
-            "wind_speed":                ":.1f",
-            "cloud_cover":               ":.0f",
-            "pressure":                  ":.1f",
-            "latitude":                  False,
-            "longitude":                 False,
-            "weather_icon":              False,
-        },
-        color_continuous_scale=[
-            [0.00, "#003355"],
-            [0.25, "#005599"],
-            [0.55, "#0088dd"],
-            [0.80, "#00ccff"],
-            [1.00, "#00ffee"],
-        ],
-        size_max=42,
-        zoom=map_zoom,
-        center=map_center,
-        height=560,
-        labels={
-            "precipitation_probability": "Rain Prob %",
-            "temperature":   "Temp °C",
-            "humidity":      "Humidity %",
-            "precipitation": "Precip mm",
-            "wind_speed":    "Wind km/h",
-            "cloud_cover":   "Cloud %",
-            "pressure":      "Pressure hPa",
-        },
-    )
+    # Build traces manually for full layout control
+    fig_map = go.Figure()
+
+    fig_map.add_trace(go.Scattermapbox(
+        lat=map_df["latitude"].tolist(),
+        lon=map_df["longitude"].tolist(),
+        mode="markers",
+        marker=go.scattermapbox.Marker(
+            size=map_df["precipitation_probability"].apply(
+                lambda p: 10 + (p / 100) * 28
+            ).tolist(),
+            color=map_df["precipitation_probability"].tolist(),
+            colorscale=[
+                [0.00, "#003355"],
+                [0.25, "#005599"],
+                [0.55, "#0088dd"],
+                [0.80, "#00ccff"],
+                [1.00, "#00ffee"],
+            ],
+            cmin=0,
+            cmax=100,
+            opacity=0.88,
+            colorbar=dict(
+                title=dict(
+                    text="Rain %",
+                    font=dict(color="rgba(255,255,255,0.65)", size=11),
+                ),
+                tickfont=dict(color="rgba(255,255,255,0.55)", size=10),
+                bgcolor="rgba(4,10,22,0.75)",
+                bordercolor="rgba(255,255,255,0.08)",
+                thickness=12,
+                len=0.55,
+                x=1.01,
+            ),
+            sizemode="diameter",
+        ),
+        text=map_df.apply(
+            lambda r: (
+                f"<b>{r['city']}</b><br>"
+                f"🌡 {r['temperature']:.1f}°C<br>"
+                f"💧 Rain: {r['precipitation_probability']:.0f}% · {r['precipitation']:.2f}mm<br>"
+                f"💦 Humidity: {r['humidity']:.0f}%<br>"
+                f"💨 Wind: {r['wind_speed']:.1f} km/h<br>"
+                f"☁ Cloud: {r['cloud_cover']:.0f}%<br>"
+                f"📊 Pressure: {r['pressure']:.1f} hPa"
+            ),
+            axis=1,
+        ).tolist(),
+        hovertemplate="%{text}<extra></extra>",
+        customdata=map_df["city"].tolist(),
+        name="",
+    ))
+
+    # uirevision tied to zoom_city: changes only when programmatic zoom changes,
+    # letting the user freely pan/zoom the rest of the time without map reset.
+    ui_rev = f"zoom-{zoom_city}" if zoom_city else "free"
+
     fig_map.update_layout(
-        mapbox_style="carto-darkmatter",
+        mapbox=dict(
+            style="carto-darkmatter",
+            zoom=map_zoom,
+            center=map_center,
+            uirevision=ui_rev,
+        ),
+        uirevision=ui_rev,
         margin=dict(r=0, t=0, l=0, b=0),
         paper_bgcolor="rgba(0,0,0,0)",
-        coloraxis_colorbar=dict(
-            title=dict(text="Rain %", font=dict(color="rgba(255,255,255,0.6)", size=11)),
-            tickfont=dict(color="rgba(255,255,255,0.55)", size=10),
-            bgcolor="rgba(4,10,22,0.7)",
-            bordercolor="rgba(255,255,255,0.08)",
-            thickness=12, len=0.6,
-        ),
         hoverlabel=dict(
             bgcolor="rgba(4,10,22,0.92)",
-            bordercolor="rgba(0,212,255,0.3)",
+            bordercolor="rgba(0,212,255,0.35)",
             font=dict(color="white", size=12, family="Inter"),
+            align="left",
         ),
+        showlegend=False,
+        height=580,
         clickmode="event+select",
     )
 
-    # ── Render map and capture click ────────────────────────────────────────
+    # ── Render — scrollZoom enables mouse wheel / trackpad pinch zoom ───────
     map_event = st.plotly_chart(
         fig_map,
         use_container_width=True,
         key="live_map",
         on_select="rerun",
         selection_mode="points",
+        config={
+            "scrollZoom": True,           # mouse wheel / two-finger trackpad
+            "displayModeBar": True,
+            "displaylogo": False,
+            "modeBarButtonsToRemove": ["select2d", "lasso2d", "toImage"],
+            "toImageButtonOptions": {"format": "png"},
+        },
     )
 
-    # Process selection → queue a zoom for the next render cycle
+    # Process click → store city for zoom on next render
     if map_event and map_event.selection and map_event.selection.points:
         pt  = map_event.selection.points[0]
         idx = pt.get("point_index", -1)
