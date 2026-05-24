@@ -20,26 +20,6 @@ st.set_page_config(
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Load prediction history from DB for sidebar display
-# ──────────────────────────────────────────────────────────────────────────────
-def load_prediction_history():
-    query = """
-        SELECT
-            city,
-            rain_probability,
-            risk_level,
-            prediction_time
-        FROM rain_predictions
-        ORDER BY prediction_time DESC
-        LIMIT 100
-    """
-
-    return pd.read_sql(query, engine)
-
-
-prediction_df = load_prediction_history()
-
-# ──────────────────────────────────────────────────────────────────────────────
 # Custom CSS
 # ──────────────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -452,7 +432,10 @@ def load_postgres():
             port=int(os.getenv("DB_PORT", 5432)),
             database=os.getenv("DB_NAME"),
         )
-        engine = create_engine(url)
+        engine = create_engine(
+            url,
+            connect_args={"sslmode": os.getenv("DB_SSLMODE", "require")}
+        )
         df = pd.read_sql("""
             SELECT * FROM live_weather
             WHERE loaded_at >= (
@@ -480,15 +463,64 @@ def load_csv():
         return None, None
 
 # ──────────────────────────────────────────────────────────────────────────────
-# New Dashbord section: Recent AI Predictions
+# Prediction history loading — Neon/PostgreSQL
 # ──────────────────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=300)
+def load_prediction_history():
+    try:
+        from sqlalchemy import create_engine
+        from sqlalchemy.engine import URL
 
-st.subheader("Recent AI Rain Predictions")
+        load_dotenv()
 
-st.dataframe(
-    prediction_df,
-    use_container_width=True
-)   
+        url = URL.create(
+            drivername="postgresql+psycopg2",
+            username=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD") or None,
+            host=os.getenv("DB_HOST"),
+            port=int(os.getenv("DB_PORT", 5432)),
+            database=os.getenv("DB_NAME"),
+        )
+
+        engine = create_engine(
+            url,
+            connect_args={"sslmode": os.getenv("DB_SSLMODE", "require")}
+        )
+
+        query = """
+            SELECT
+                city,
+                rain_prediction,
+                rain_probability,
+                risk_level,
+                model_version,
+                prediction_time,
+                created_at
+            FROM rain_predictions
+            ORDER BY prediction_time DESC
+            LIMIT 100;
+        """
+
+        pred_df = pd.read_sql(query, engine)
+
+        if pred_df.empty:
+            return pred_df
+
+        pred_df["prediction_time"] = pd.to_datetime(pred_df["prediction_time"])
+        pred_df["created_at"] = pd.to_datetime(pred_df["created_at"])
+
+        return pred_df
+
+    except Exception:
+        return pd.DataFrame(columns=[
+            "city",
+            "rain_prediction",
+            "rain_probability",
+            "risk_level",
+            "model_version",
+            "prediction_time",
+            "created_at",
+        ])
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -738,42 +770,7 @@ ml_city = st.selectbox(
     key="ml_city_select"
 )
 
-ml_df = (
-    city_df[city_df["city"] == ml_city]
-    .sort_values("forecast_time")
-    .copy()
-)
-
-if len(ml_df) >= 3:
-
-    latest_row = ml_df.iloc[-1]
-    prev_row   = ml_df.iloc[-2]
-
-    temp_rolling_3 = ml_df["temperature"].tail(3).mean()
-    humidity_rolling_3 = ml_df["humidity"].tail(3).mean()
-
-    input_data = {
-        "city": latest_row["city"],
-        "latitude": latest_row["latitude"],
-        "longitude": latest_row["longitude"],
-        "temperature": latest_row["temperature"],
-        "humidity": latest_row["humidity"],
-        "precipitation": latest_row["precipitation"],
-        "rain": latest_row["precipitation"],
-        "pressure": latest_row["pressure"],
-        "cloud_cover": latest_row["cloud_cover"],
-        "wind_speed": latest_row["wind_speed"],
-        "hour": latest_row["forecast_time"].hour,
-        "day": latest_row["forecast_time"].day,
-        "month": latest_row["forecast_time"].month,
-        "day_of_week": latest_row["forecast_time"].dayofweek,
-        "precipitation_lag_1": prev_row["precipitation"],
-        "humidity_lag_1": prev_row["humidity"],
-        "cloud_cover_lag_1": prev_row["cloud_cover"],
-        "temp_rolling_3": temp_rolling_3,
-        "humidity_rolling_3": humidity_rolling_3,
-    }
-
+try:
     prediction_result = predict_city_rain(ml_city)
 
     pred_col1, pred_col2, pred_col3 = st.columns(3)
@@ -814,7 +811,6 @@ if len(ml_df) >= 3:
         """, unsafe_allow_html=True)
 
     with pred_col3:
-
         pred_text = (
             "Rain Likely"
             if prediction_result["rain_prediction"] == 1
@@ -840,8 +836,92 @@ if len(ml_df) >= 3:
         </div>
         """, unsafe_allow_html=True)
 
+except Exception as e:
+    st.warning(f"AI prediction unavailable right now: {e}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Recent AI Prediction History
+# ──────────────────────────────────────────────────────────────────────────────
+prediction_df = load_prediction_history()
+
+st.markdown("""
+<div class="section-hdr">
+    <span class="section-hdr-title">🧠 Recent AI Predictions</span>
+    <div class="section-hdr-line"></div>
+    <span style="color:rgba(255,255,255,0.25);font-size:0.72rem;white-space:nowrap;">
+        Stored in Neon PostgreSQL
+    </span>
+</div>
+""", unsafe_allow_html=True)
+
+if prediction_df.empty:
+    st.info("No AI prediction history found yet. Select a city above to generate predictions.")
 else:
-    st.warning("Not enough historical rows available for ML prediction.")
+    avg_prediction_prob = prediction_df["rain_probability"].mean()
+    high_risk_predictions = (prediction_df["risk_level"] == "High").sum()
+    latest_prediction_time = prediction_df["prediction_time"].max()
+
+    hist_col1, hist_col2, hist_col3 = st.columns(3)
+
+    with hist_col1:
+        st.markdown(f"""
+        <div class="kpi-card blue">
+            <div class="kpi-top-bar"></div>
+            <div class="kpi-icon">📊</div>
+            <div class="kpi-label">Avg AI Rain Probability</div>
+            <div class="kpi-value">{avg_prediction_prob:.1f}<span style="font-size:1rem;font-weight:500">%</span></div>
+            <div class="kpi-sub">Last {len(prediction_df)} predictions</div>
+            <div class="kpi-glow"></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with hist_col2:
+        st.markdown(f"""
+        <div class="kpi-card amber">
+            <div class="kpi-top-bar"></div>
+            <div class="kpi-icon">🚨</div>
+            <div class="kpi-label">High Risk Predictions</div>
+            <div class="kpi-value">{high_risk_predictions}</div>
+            <div class="kpi-sub">Stored prediction history</div>
+            <div class="kpi-glow"></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with hist_col3:
+        st.markdown(f"""
+        <div class="kpi-card teal">
+            <div class="kpi-top-bar"></div>
+            <div class="kpi-icon">🕒</div>
+            <div class="kpi-label">Latest AI Prediction</div>
+            <div class="kpi-value" style="font-size:1.35rem;padding-top:0.2rem;">
+                {latest_prediction_time.strftime('%H:%M:%S')}
+            </div>
+            <div class="kpi-sub">{latest_prediction_time.strftime('%d %b %Y')}</div>
+            <div class="kpi-glow"></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with st.expander("View recent AI prediction records"):
+        display_predictions = prediction_df.copy()
+        display_predictions["prediction_time"] = display_predictions["prediction_time"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        display_predictions["created_at"] = display_predictions["created_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        st.dataframe(
+            display_predictions,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "city": st.column_config.TextColumn("City"),
+                "rain_prediction": st.column_config.NumberColumn("Prediction"),
+                "rain_probability": st.column_config.NumberColumn("Rain Probability %", format="%.2f"),
+                "risk_level": st.column_config.TextColumn("Risk Level"),
+                "model_version": st.column_config.TextColumn("Model Version"),
+                "prediction_time": st.column_config.TextColumn("Prediction Time"),
+                "created_at": st.column_config.TextColumn("Created At"),
+            },
+        )
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # City Snapshot Grid
